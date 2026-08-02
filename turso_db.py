@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turso 云数据库封装 - 基于 libsql HTTP API
+"""Turso 云数据库封装 - 基于 libsql HTTP API (v2/pipeline)
 确保本机关机时数据库依然在线可用
 """
 
@@ -23,63 +23,73 @@ class TursoDB:
             self.http_url = self.db_url
         self.available = bool(self.http_url and self.auth_token)
 
-    def _execute(self, sql, args=None):
-        """执行SQL（无返回数据）"""
+    def _pipeline(self, requests_list):
+        """通过 /v2/pipeline 端点执行请求"""
         if not self.available:
             return None
         try:
-            statement = {"sql": sql}
-            if args:
-                statement["args"] = [{"type": "text", "value": str(a)} for a in args]
-
             resp = requests.post(
-                f"{self.http_url}/v2/execute",
+                f"{self.http_url}/v2/pipeline",
                 headers={
                     "Authorization": f"Bearer {self.auth_token}",
                     "Content-Type": "application/json",
                 },
-                json={"statements": [statement]},
+                json={"requests": requests_list},
                 timeout=15,
             )
-            return resp.json() if resp.status_code == 200 else None
+            if resp.status_code == 200:
+                return resp.json()
+            return None
         except Exception:
             return None
+
+    def _execute(self, sql, args=None):
+        """执行SQL（无返回数据）"""
+        stmt = {"sql": sql}
+        if args:
+            stmt["args"] = [{"type": "text", "value": str(a)} for a in args]
+
+        result = self._pipeline([{"type": "execute", "stmt": stmt}])
+        return result
 
     def _query(self, sql, args=None):
         """查询SQL，返回字典列表"""
         if not self.available:
             return []
         try:
-            statement = {"sql": sql}
+            stmt = {"sql": sql}
             if args:
-                statement["args"] = [{"type": "text", "value": str(a)} for a in args]
+                stmt["args"] = [{"type": "text", "value": str(a)} for a in args]
 
-            resp = requests.post(
-                f"{self.http_url}/v2/query",
-                headers={
-                    "Authorization": f"Bearer {self.auth_token}",
-                    "Content-Type": "application/json",
-                },
-                json={"statements": [statement]},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("results", [])
-                if results and isinstance(results, list):
-                    result = results[0]
-                    cols = result.get("cols", {}).get("name", [])
-                    rows = result.get("rows", [])
-                    parsed = []
-                    for row in rows:
-                        row_dict = {}
-                        for i, cell in enumerate(row):
-                            if i < len(cols):
-                                val = cell.get("value") if isinstance(cell, dict) else cell
-                                row_dict[cols[i]] = val
-                        parsed.append(row_dict)
-                    return parsed
-            return []
+            data = self._pipeline([{"type": "execute", "stmt": stmt}])
+            if not data:
+                return []
+
+            results = data.get("results", [])
+            if not results:
+                return []
+
+            result_item = results[0]
+            if result_item.get("type") != "ok":
+                return []
+
+            response = result_item.get("response", {})
+            if response.get("type") != "execute":
+                return []
+
+            result = response.get("result", {})
+            cols = [c.get("name", "") for c in result.get("cols", [])]
+            rows = result.get("rows", [])
+
+            parsed = []
+            for row in rows:
+                row_dict = {}
+                for i, cell in enumerate(row):
+                    if i < len(cols):
+                        val = cell.get("value") if isinstance(cell, dict) else cell
+                        row_dict[cols[i]] = val
+                parsed.append(row_dict)
+            return parsed
         except Exception:
             return []
 
