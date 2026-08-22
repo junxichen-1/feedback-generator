@@ -20,6 +20,12 @@ class AIFeedbackGenerator:
                 self.client = None
     
     def generate_coach_feedback(self, student_name, review_num, new_num, review_forget, new_forget, is_reading=False, is_forget_training=False):
+        # 防御 None 值，防止后续比较和乘法运算崩溃
+        review_num = review_num if review_num is not None else 0
+        new_num = new_num if new_num is not None else 0
+        review_forget = review_forget if review_forget is not None else 0
+        new_forget = new_forget if new_forget is not None else 0
+
         if not self.client:
             return self._get_default_feedback(is_reading, review_num, new_num, is_forget_training)
         

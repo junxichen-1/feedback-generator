@@ -312,18 +312,21 @@ def fetch_forget_courses(child_name, system_config, token, student_id):
 
     add_log(f"找到 {len(records)} 条抗遗忘课程记录")
     result = []
+    # 注意: .get("key", 0) 在 key 存在但值为 None 时仍返回 None，会导致后续乘法崩溃
+    # 因此对数值字段使用 `if x is not None else 0`，对字符串使用 `or ""`
     for r in records:
         result.append({
-            "reviewWords": r.get("reviewWords", 0),
-            "scoreForgetNum": r.get("scoreForgetNum", 0),
-            "scoreAccuracyNum": r.get("scoreAccuracyNum", 0),
-            "accuracy": r.get("accuracy", 0),
-            "forgetDate": r.get("forgetDate", ""),
-            "teacherName": r.get("teacherName", ""),
+            "reviewWords": r.get("reviewWords") if r.get("reviewWords") is not None else 0,
+            "scoreForgetNum": r.get("scoreForgetNum") if r.get("scoreForgetNum") is not None else 0,
+            "scoreAccuracyNum": r.get("scoreAccuracyNum") if r.get("scoreAccuracyNum") is not None else 0,
+            "accuracy": r.get("accuracy") if r.get("accuracy") is not None else 0,
+            "forgetDate": r.get("forgetDate") or "",
+            "teacherName": r.get("teacherName") or "武杰",
         })
 
     latest = result[0]
-    add_log(f"最新: 复习{latest['reviewWords']}个，遗忘{latest['scoreForgetNum']}个，正确率{int(latest['accuracy'] * 100)}%")
+    latest_acc = latest["accuracy"] if latest["accuracy"] is not None else 0
+    add_log(f"最新: 复习{latest['reviewWords']}个，遗忘{latest['scoreForgetNum']}个，正确率{int(latest_acc * 100)}%")
     return result, None
 
 
@@ -332,13 +335,26 @@ def generate_forget_feedback(child_name, forget_data):
     if not forget_data:
         return None, "没有抗遗忘课程数据，请先获取"
 
-    latest = forget_data[0]
-    review_words = latest.get("reviewWords", 0)
-    score_forget = latest.get("scoreForgetNum", 0)
-    score_accuracy = latest.get("scoreAccuracyNum", 0)
-    accuracy = latest.get("accuracy", 0)
-    forget_date = latest.get("forgetDate", "")
-    teacher_name = latest.get("teacherName", "武杰")
+    # 从最新记录开始找，跳过 review_words=0 且 accuracy=0 的无效记录
+    # 例如 entopia 会返回未来日期（如 2026-08-24）的空预约记录，所有数值字段都是 None
+    latest = None
+    for rec in forget_data:
+        rw = rec.get("reviewWords") if rec.get("reviewWords") is not None else 0
+        acc = rec.get("accuracy") if rec.get("accuracy") is not None else 0
+        if rw > 0 or acc > 0:
+            latest = rec
+            break
+    if latest is None:
+        # 所有记录都无效，至少用第一条保证不报错
+        latest = forget_data[0]
+        add_log("⚠ 所有记录均为无效数据(复习数和正确率都为0)，使用第一条")
+
+    review_words = latest.get("reviewWords") if latest.get("reviewWords") is not None else 0
+    score_forget = latest.get("scoreForgetNum") if latest.get("scoreForgetNum") is not None else 0
+    score_accuracy = latest.get("scoreAccuracyNum") if latest.get("scoreAccuracyNum") is not None else 0
+    accuracy = latest.get("accuracy") if latest.get("accuracy") is not None else 0
+    forget_date = latest.get("forgetDate") or ""
+    teacher_name = latest.get("teacherName") or "武杰"
 
     date_str = datetime.now().strftime("%Y年%m月%d日")
     if forget_date:
